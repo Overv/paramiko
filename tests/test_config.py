@@ -3,17 +3,22 @@
 
 from os.path import expanduser
 
-from pytest import raises, mark
+from mock import patch
+from pytest import raises, mark, skip
 
 from paramiko import SSHConfig, SSHConfigDict
 from paramiko.util import lookup_ssh_host_config
 
-from .util import _support
+from .util import _config
+
+
+def load_config(name):
+    return SSHConfig.from_path(_config(name))
 
 
 class TestSSHConfig(object):
     def setup(self):
-        self.config = SSHConfig.from_path(_support("robey.config"))
+        self.config = load_config("robey")
 
     def test_init(self):
         # No args!
@@ -27,12 +32,13 @@ class TestSSHConfig(object):
         assert config.lookup("foo.example.com")["user"] == "foo"
 
     def test_from_file(self):
-        with open(_support("robey.config")) as flo:
+        with open(_config("robey")) as flo:
             config = SSHConfig.from_file(flo)
         assert config.lookup("whatever")["user"] == "robey"
 
     def test_from_path(self):
-        config = SSHConfig.from_path(_support("robey.config"))
+        # NOTE: DO NOT replace with use of load_config() :D
+        config = SSHConfig.from_path(_config("robey"))
         assert config.lookup("meh.example.com")["port"] == "3333"
 
     def test_parse_config(self):
@@ -451,3 +457,140 @@ Host *
 """
         )
         assert config.lookup("anything-else").as_int("port") == 3333
+
+
+@patch("paramiko.config.socket")
+class TestHostnameCanonicalization(object):
+    # NOTE: this class uses on-disk configs, and ones with real (at time of
+    # writing) DNS names, so that one can easily test OpenSSH's behavior using
+    # "ssh -F path/to/file.config -G <target>".
+
+    def test_off_by_default(self, socket):
+        result = load_config("basic").lookup("www")
+        assert result["hostname"] == "www"
+        assert "user" not in result
+        assert not socket.gethostbyname.called
+
+    def test_explicit_no_same_as_default(self, socket):
+        result = load_config("no-canon").lookup("www")
+        assert result["hostname"] == "www"
+        assert "user" not in result
+        assert not socket.gethostbyname.called
+
+    @mark.parametrize(
+        "config_name",
+        ("canon", "canon-always", "canon-local", "canon-local-always"),
+    )
+    def test_canonicalization_base_cases(self, socket, config_name):
+        result = load_config(config_name).lookup("www")
+        assert result["hostname"] == "www.paramiko.org"
+        assert result["user"] == "rando"
+        socket.gethostbyname.assert_called_once_with("www.paramiko.org")
+
+    def test_uses_getaddrinfo_when_AddressFamily_given(self, socket):
+        result = load_config("canon-ipv4").lookup("www")
+        assert result["hostname"] == "www.paramiko.org"
+        assert result["user"] == "rando"
+        assert not socket.gethostbyname.called
+        gai_args = socket.getaddrinfo.call_args[0]
+        assert gai_args[0] == "www.paramiko.org"
+        assert gai_args[2] is socket.AF_INET  # Mocked, but, still useful
+
+    def test_empty_CanonicalDomains_disables_canonicalization(self, socket):
+        # TODO: is that accurate? or does this throw an error?
+        skip()
+
+    def test_CanonicalDomains_may_be_set_to_space_separated_list(self, socket):
+        # TODO: they're tested in order, prove that
+        skip()
+
+    def test_disabled_for_dotted_hostnames_by_default(self, socket):
+        # TODO: i.e. act like MaxDots == 1 - 'foo.bar' is canonicalized, but
+        # 'foo.bar.biz' is assumed to be already canonical
+        skip()
+
+    def test_hostname_depth_controllable_with_max_dots_directive(self, socket):
+        # TODO: use a MaxDots of, say, 2 to allow even foo.bar.biz to become
+        # subject to canonicalization (but foo.bar.biz.baz is still skipped)
+        skip()
+
+    def test_max_dots_may_be_zero(self, socket):
+        # TODO: means even single-dot names like foo.bar are assumed to
+        # already be canonical and are skipped.
+        skip()
+
+    def test_reparsing_does_not_occur_when_canonicalization_fails(
+        self, socket
+    ):
+        # TODO: what if the given name doesn't even resolve when canonicalized
+        # _and_ CanonicalizeFallbackLocal is not active? Do we fail or just
+        # return the first parse phase result?
+        skip()
+
+    def test_ProxyCommand_not_canonicalized_when_canonical_yes(self, socket):
+        # TODO: may be only applicable at Fabric level?
+        skip()
+
+    def test_ProxyJump_not_canonicalized_when_canonical_yes(self, socket):
+        # TODO: may be only applicable at Fabric level?
+        skip()
+
+    def test_ProxyCommand_canonicalized_when_canonical_always(self, socket):
+        # TODO: may be only applicable at Fabric level?
+        skip()
+
+    def test_ProxyJump_canonicalized_when_canonical_always(self, socket):
+        # TODO: may be only applicable at Fabric level?
+        skip()
+
+    def test_fallback_yes_is_same_as_default_behavior(self, socket):
+        # TODO: see below TODO for 'no' value
+        skip()
+
+    def test_fallback_no_causes_errors_for_unresolvable_names(self, socket):
+        # TODO: confirm openssh behavior, sounds like this is intended as a way
+        # of _enforcing_ that all names must be resolvable within
+        # CanonicalDomains?
+        # TODO: docs say KeyError, consider using custom instead or just not
+        # trapping the DNS lookup failure? What's OpenSSH do exactly?
+        skip()
+
+    def test_identityfile_continues_being_appended_to(self, socket):
+        # TODO: identityfile loaded in first pass, then appended to in
+        # canonicalized pass
+        skip()
+
+    def test_variable_expansion_of_hostname_applies_in_right_order(
+        self, socket
+    ):
+        # TODO: make sure we match OpenSSH behavior here, including corner
+        # cases (e.g. who wins, the canonicalized version of the hostname or an
+        # explicit HostName that newly matches after canonicalization? XD)
+        skip()
+
+
+@mark.skip
+class TestCanonicalizationOfCNAMEs(object):
+    def test_permitted_cnames_may_be_one_to_one_mapping(self):
+        # CanonicalizePermittedCNAMEs *.foo.com:*.bar.com
+        pass
+
+    def test_permitted_cnames_may_be_one_to_many_mapping(self):
+        # CanonicalizePermittedCNAMEs *.foo.com:*.bar.com,*.biz.com
+        pass
+
+    def test_permitted_cnames_may_be_many_to_one_mapping(self):
+        # CanonicalizePermittedCNAMEs *.foo.com,*.bar.com:*.biz.com
+        pass
+
+    def test_permitted_cnames_may_be_many_to_many_mapping(self):
+        # CanonicalizePermittedCNAMEs *.foo.com,*.bar.com:*.biz.com,*.baz.com
+        pass
+
+    def test_permitted_cnames_may_be_multiple_mappings(self):
+        # CanonicalizePermittedCNAMEs *.foo.com,*.bar.com *.biz.com:*.baz.com
+        pass
+
+    def test_permitted_cnames_may_be_multiple_complex_mappings(self):
+        # Same as prev but with multiple patterns on both ends in both args
+        pass

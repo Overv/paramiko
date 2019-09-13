@@ -2,6 +2,10 @@
 Changelog
 =========
 
+- :feature:`717` Implement support for the ``Match`` keyword in ``ssh_config``
+  files. Previously, this keyword was simply ignored & keywords inside such
+  blocks were treated as if they were part of the previous block. Thanks to
+  Michael Leinartas for the initial patchset.
 - :feature:`897` Implement most 'canonical hostname' ``ssh_config``
   functionality (``CanonicalizeHostname``, ``CanonicalDomains``,
   ``CanonicalizeFallbackLocal``, and ``CanonicalizeMaxDots``;
